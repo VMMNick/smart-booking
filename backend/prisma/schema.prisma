@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+}
+
+enum ConditionType {
+  time_of_day
+  demand
+  day_of_week
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String
+  role         Role      @default(USER)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  bookings     Booking[]
+
+  @@map("users")
+}
+
+model Room {
+  id           String         @id @default(uuid())
+  name         String
+  basePrice    Decimal        @map("base_price") @db.Decimal(10, 2)
+  capacity     Int
+  location     String
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  // optimistic locking fallback (used if row-level SELECT FOR UPDATE is not chosen)
+  version      Int            @default(0)
+  bookings     Booking[]
+  pricingRules PricingRule[]
+
+  @@map("rooms")
+}
+
+model Booking {
+  id             String        @id @default(uuid())
+  roomId         String        @map("room_id")
+  room           Room          @relation(fields: [roomId], references: [id])
+  userId         String        @map("user_id")
+  user           User          @relation(fields: [userId], references: [id])
+  startTime      DateTime      @map("start_time")
+  endTime        DateTime      @map("end_time")
+  finalPrice     Decimal       @map("final_price") @db.Decimal(10, 2)
+  status         BookingStatus @default(pending)
+  stripePaymentId String?      @map("stripe_payment_id")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  // Prevents two rows for the same room/time range from both being "active"
+  // (pending or confirmed). Cancelled bookings are excluded via partial index,
+  // enforced additionally in application logic + transaction lock.
+  @@index([roomId, startTime, endTime])
+  @@map("bookings")
+}
+
+model PricingRule {
+  id            String        @id @default(uuid())
+  roomId        String        @map("room_id")
+  room          Room          @relation(fields: [roomId], references: [id])
+  conditionType ConditionType @map("condition_type")
+  // free-form condition payload, e.g. {"from": "18:00", "to": "22:00"} or {"day": "friday"}
+  condition     Json?
+  multiplier    Decimal       @db.Decimal(4, 2)
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  @@map("pricing_rules")
+}
